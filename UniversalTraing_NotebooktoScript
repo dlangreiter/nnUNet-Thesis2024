@@ -133,17 +133,6 @@ import matplotlib.animation as animation
 from matplotlib.colors import ListedColormap, BoundaryNorm
 
 def load_nifti_mask(nifti_path):
-    """
-    Loads a NIfTI mask file.
-
-    Parameters:
-    - nifti_path: str, path to the NIfTI file
-
-    Returns:
-    - mask: 3D numpy array
-    - affine: 2D numpy array, affine transformation matrix
-    - header: NIfTI header object
-    """
     if not os.path.exists(nifti_path):
         print(f"File not found: {nifti_path}")
         sys.exit(1)
@@ -156,27 +145,10 @@ def load_nifti_mask(nifti_path):
     return mask, affine, header
 
 def print_voxel_spacing(header, label):
-    """
-    Prints the voxel spacing from the NIfTI header.
-
-    Parameters:
-    - header: NIfTI header object
-    - label: str, label to identify the image (e.g., 'Ground Truth')
-    """
     voxel_spacing = header.get_zooms()[:3]
     print(f"{label} Voxel Spacing (mm): {voxel_spacing}")
 
 def check_affine_alignment(affine_gt, affine_pred):
-    """
-    Checks if the affine matrices of ground truth and prediction match.
-
-    Parameters:
-    - affine_gt: 2D numpy array, affine matrix of ground truth
-    - affine_pred: 2D numpy array, affine matrix of prediction
-
-    Returns:
-    - bool, True if affines match within a tolerance, False otherwise
-    """
     if np.allclose(affine_gt, affine_pred, atol=1e-5):
         print("Affine matrices match. Images are aligned.")
         return True
@@ -187,20 +159,6 @@ def check_affine_alignment(affine_gt, affine_pred):
         return False
 
 def create_combined_mask(ground_truth, prediction):
-    """
-    Creates a combined mask with distinct labels:
-    0 - Background
-    1 - Ground Truth only
-    2 - Prediction only
-    3 - Both Ground Truth and Prediction
-
-    Parameters:
-    - ground_truth: 3D numpy array
-    - prediction: 3D numpy array
-
-    Returns:
-    - combined_mask: 3D numpy array with combined labels
-    """
     combined_mask = np.zeros_like(ground_truth, dtype=np.uint8)
     combined_mask += ground_truth
     combined_mask += prediction * 2
@@ -212,15 +170,6 @@ def create_combined_mask(ground_truth, prediction):
     return combined_mask
 
 def display_masks_slice_combined(colored_mask, slice_idx, cmap, norm):
-    """
-    Displays a specific slice of the combined mask with a legend.
-
-    Parameters:
-    - colored_mask: 3D numpy array, combined mask with labels
-    - slice_idx: int, index of the slice to display
-    - cmap: matplotlib Colormap object
-    - norm: matplotlib Normalize object
-    """
     if slice_idx < 0 or slice_idx >= colored_mask.shape[2]:
         print(f"Slice index {slice_idx} is out of bounds for data with {colored_mask.shape[2]} slices.")
         sys.exit(1)
@@ -241,15 +190,6 @@ def display_masks_slice_combined(colored_mask, slice_idx, cmap, norm):
     plt.show()
 
 def display_masks_slideshow_combined(colored_mask, cmap, norm, delay=1):
-    """
-    Displays all slices in a slideshow manner with a legend.
-
-    Parameters:
-    - colored_mask: 3D numpy array, combined mask with labels
-    - cmap: matplotlib Colormap object
-    - norm: matplotlib Normalize object
-    - delay: float, delay between slices in seconds
-    """
     num_slices = colored_mask.shape[2]
     
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -274,23 +214,14 @@ def display_masks_slideshow_combined(colored_mask, cmap, norm, delay=1):
     plt.show()
 
 def main():
-    """
-    Main function to load masks, verify alignment, and visualize them.
-    """
-    # ==================== User-Defined Variables ====================
-
     # Paths to the NIfTI files
-    ground_truth_path = '/home/declan/thesis7/10percenttest/ground_truth/BRAT_061.nii.gz'  # Replace with your ground truth NIfTI file path
-    prediction_path = '/home/declan/thesis7/resultPostprocess/BRAT_061.nii.gz'      # Replace with your prediction NIfTI file path
-
-    # Visualization settings
+    ground_truth_path = '/home/declan/thesis7/10percenttest/ground_truth/BRAT_061.nii.gz' 
+    prediction_path = '/home/declan/thesis7/resultPostprocess/BRAT_061.nii.gz'      
     visualize_slice = True    # Set to True to visualize a specific slice
     slice_index = 46          # Slice index to visualize (if visualize_slice is True)
 
     use_slideshow = False       # Set to True to display all slices as a slideshow
     slideshow_delay = 0.5      # Delay between slices in seconds for the slideshow
-
-    # ===================================================================
 
     # Load masks along with their affine matrices and headers
     ground_truth, affine_gt, header_gt = load_nifti_mask(ground_truth_path)
