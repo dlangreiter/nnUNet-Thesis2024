@@ -1,0 +1,36 @@
+# %%
+!nnUNetv2_extract_fingerprint -d 100 --verify_dataset_integrity 
+
+# %%
+!nnUNetv2_plan_experiment -d 100 --verify_dataset_integrity
+
+# %%
+!nnUNetv2_preprocess -d 100 --verify_dataset_integrity
+
+# %%
+!nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainer_2000epochs
+
+# %%
+
+
+# %%
+!nnUNetv2_predict -d Dataset100_Liver -i "/home/declan/MultiModalModel/testcases" -o "/home/declan/MultiModalModel/testresults" -f  0  -tr nnUNetTrainer_2000epochs -c 3d_fullres 
+
+# %%
+import nibabel as nib
+
+file_paths = [
+    '/home/declan/MultiModalModel/10test/Liver_0004_0000.nii.gz',
+    '/home/declan/MultiModalModel/10test/Liver_0004_0001.nii.gz',
+    '/home/declan/MultiModalModel/10test/Liver_0004_0002.nii.gz',
+    '/home/declan/MultiModalModel/10test/Liver_0004_0003.nii.gz'
+]
+
+for path in file_paths:
+    img = nib.load(path)
+    print(f"{path}: {img.shape}")
+
+# %%
+!nnUNetv2_predict -d Dataset100_Liver -i "/home/declan/MultiModalModel/nnUNet_raw/Dataset100_Liver/imagesTr" -o "/home/declan/MultiModalModel/nnUNet_results_PreProcessed" -f  0 -tr nnUNetTrainer_2000epochs -c 3d_fullres -p nnUNetPlans
+
+
