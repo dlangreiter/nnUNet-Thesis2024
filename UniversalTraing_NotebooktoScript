@@ -1,0 +1,1879 @@
+# %%
+!nnUNetv2_extract_fingerprint -d 97 --verify_dataset_integrity 
+
+# %%
+!nnUNetv2_plan_experiment -d 97 --verify_dataset_integrity
+
+# %%
+!nnUNetv2_preprocess -d 97 --verify_dataset_integrity
+
+# %%
+!nnUNetv2_train 97 3d_fullres 0 -tr nnUNetTrainer_2000epochs
+
+# %%
+!nnUNetv2_train 97 3d_fullres 1 -tr nnUNetTrainer_2000epochs
+!nnUNetv2_train 97 3d_fullres 2 -tr nnUNetTrainer_2000epochs
+!nnUNetv2_train 97 3d_fullres 3 -tr nnUNetTrainer_2000epochs
+!nnUNetv2_train 97 3d_fullres 4 -tr nnUNetTrainer_2000epochs
+
+# %%
+!nnUNetv2_find_best_configuration 97 -c 3d_fullres -tr nnUNetTrainer_2000epochs -f 0 1 2 3 4 
+
+# %%
+!nnUNetv2_export_model_to_zip
+
+# %%
+!nnUNetv2_predict -d Dataset097_Liver -i "/home/declan/thesis7/10percenttest/input" -o "/home/declan/thesis7/results" -f  0 1 2 3 4 -tr nnUNetTrainer_2000epochs -c 3d_fullres -p nnUNetPlans
+
+# %%
+!nnUNetv2_apply_postprocessing -i "/home/declan/thesis7/results" -o "/home/declan/thesis7/resultPostprocess" -pp_pkl_file /home/declan/thesis7/nnUNet_results/Dataset097_Liver/nnUNetTrainer_2000epochs__nnUNetPlans__3d_fullres/crossval_results_folds_0_1_2_3_4/postprocessing.pkl -np 8 -plans_json /home/declan/thesis7/nnUNet_results/Dataset097_Liver/nnUNetTrainer_2000epochs__nnUNetPlans__3d_fullres/crossval_results_folds_0_1_2_3_4/plans.json
+
+# %%
+import nibabel as nib
+
+# Load prediction and ground truth
+pred_img = nib.load('/home/declan/thesis7/resultPostprocess/BRAT_015.nii.gz')
+gt_img = nib.load('/home/declan/thesis7/10percenttest/ground_truth/BRAT_015.nii.gz')
+
+# Compare voxel spacing
+print("Prediction Voxel Spacing:", pred_img.header.get_zooms())
+print("Ground Truth Voxel Spacing:", gt_img.header.get_zooms())
+
+# Compare affine matrices
+print("Prediction Affine:\n", pred_img.affine)
+print("Ground Truth Affine:\n", gt_img.affine)
+
+
+# %%
+import nibabel as nib
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Load images
+original = nib.load('/home/declan/thesis7/10percenttest/input/BRAT_015_0000.nii.gz').get_fdata()
+gt = nib.load('/home/declan/thesis7/10percenttest/ground_truth/BRAT_015.nii.gz').get_fdata()
+pred = nib.load('/home/declan/thesis7/resultPostprocess/BRAT_015.nii.gz').get_fdata()
+
+# Choose a slice
+slice_idx = original.shape[2] // 2  # Middle slice
+
+plt.figure(figsize=(12, 6))
+plt.subplot(1, 3, 1)
+plt.imshow(original[:, :, slice_idx], cmap='gray')
+plt.title('Original Image')
+
+plt.subplot(1, 3, 2)
+plt.imshow(original[:, :, slice_idx], cmap='gray')
+plt.imshow(gt[:, :, slice_idx], alpha=0.5, cmap='Reds')
+plt.title('Ground Truth Overlay')
+
+plt.subplot(1, 3, 3)
+plt.imshow(original[:, :, slice_idx], cmap='gray')
+plt.imshow(pred[:, :, slice_idx], alpha=0.5, cmap='Blues')
+plt.title('Prediction Overlay')
+
+plt.show()
+
+from medpy import metric
+
+dice = metric.binary.dc(pred > 0, gt > 0)
+hausdorff = metric.binary.hd95(pred > 0, gt > 0)
+
+print(f"Dice Coefficient: {dice}")
+print(f"Hausdorff Distance: {hausdorff} mm")
+
+
+
+# %%
+import os
+import nibabel as nib
+from medpy import metric
+
+input_dir = '/home/declan/thesis7/resultPostprocess'
+gt_dir = '/home/declan/thesis7/10percenttest/ground_truth'
+
+for filename in os.listdir(input_dir):
+    if filename.endswith('.nii.gz'):
+        pred_path = os.path.join(input_dir, filename)
+        gt_path = os.path.join(gt_dir, filename)
+        
+        if not os.path.exists(gt_path):
+            print(f"Ground truth not found for {filename}")
+            continue
+        
+        pred_img = nib.load(pred_path)
+        gt_img = nib.load(gt_path)
+        
+        # Check voxel spacing
+        if pred_img.header.get_zooms() != gt_img.header.get_zooms():
+            print(f"Voxel spacing mismatch for {filename}")
+        
+        # Check affine
+        if not np.allclose(pred_img.affine, gt_img.affine):
+            print(f"Affine mismatch for {filename}")
+        
+        # Compute metrics
+        pred_data = pred_img.get_fdata() > 0
+        gt_data = gt_img.get_fdata() > 0
+        
+        dice = metric.binary.dc(pred_data, gt_data)
+        hausdorff = metric.binary.hd95(pred_data, gt_data)
+        
+        print(f"{filename}: Dice={dice:.4f}, Hausdorff95={hausdorff:.2f} mm")
+
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import nibabel as nib
+import os
+import sys
+import matplotlib.patches as mpatches
+import matplotlib.animation as animation
+from matplotlib.colors import ListedColormap, BoundaryNorm
+
+def load_nifti_mask(nifti_path):
+    """
+    Loads a NIfTI mask file.
+
+    Parameters:
+    - nifti_path: str, path to the NIfTI file
+
+    Returns:
+    - mask: 3D numpy array
+    - affine: 2D numpy array, affine transformation matrix
+    - header: NIfTI header object
+    """
+    if not os.path.exists(nifti_path):
+        print(f"File not found: {nifti_path}")
+        sys.exit(1)
+    nifti_img = nib.load(nifti_path)
+    mask = nifti_img.get_fdata()
+    affine = nifti_img.affine
+    header = nifti_img.header
+    # Ensure binary mask
+    mask = (mask > 0).astype(np.uint8)
+    return mask, affine, header
+
+def print_voxel_spacing(header, label):
+    """
+    Prints the voxel spacing from the NIfTI header.
+
+    Parameters:
+    - header: NIfTI header object
+    - label: str, label to identify the image (e.g., 'Ground Truth')
+    """
+    voxel_spacing = header.get_zooms()[:3]
+    print(f"{label} Voxel Spacing (mm): {voxel_spacing}")
+
+def check_affine_alignment(affine_gt, affine_pred):
+    """
+    Checks if the affine matrices of ground truth and prediction match.
+
+    Parameters:
+    - affine_gt: 2D numpy array, affine matrix of ground truth
+    - affine_pred: 2D numpy array, affine matrix of prediction
+
+    Returns:
+    - bool, True if affines match within a tolerance, False otherwise
+    """
+    if np.allclose(affine_gt, affine_pred, atol=1e-5):
+        print("Affine matrices match. Images are aligned.")
+        return True
+    else:
+        print("Affine matrices do NOT match. Images may not be aligned.")
+        print("Ground Truth Affine:\n", affine_gt)
+        print("Prediction Affine:\n", affine_pred)
+        return False
+
+def create_combined_mask(ground_truth, prediction):
+    """
+    Creates a combined mask with distinct labels:
+    0 - Background
+    1 - Ground Truth only
+    2 - Prediction only
+    3 - Both Ground Truth and Prediction
+
+    Parameters:
+    - ground_truth: 3D numpy array
+    - prediction: 3D numpy array
+
+    Returns:
+    - combined_mask: 3D numpy array with combined labels
+    """
+    combined_mask = np.zeros_like(ground_truth, dtype=np.uint8)
+    combined_mask += ground_truth
+    combined_mask += prediction * 2
+    # Now:
+    # 0 - Background
+    # 1 - Ground Truth only
+    # 2 - Prediction only
+    # 3 - Both
+    return combined_mask
+
+def display_masks_slice_combined(colored_mask, slice_idx, cmap, norm):
+    """
+    Displays a specific slice of the combined mask with a legend.
+
+    Parameters:
+    - colored_mask: 3D numpy array, combined mask with labels
+    - slice_idx: int, index of the slice to display
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    """
+    if slice_idx < 0 or slice_idx >= colored_mask.shape[2]:
+        print(f"Slice index {slice_idx} is out of bounds for data with {colored_mask.shape[2]} slices.")
+        sys.exit(1)
+    
+    mask_slice = colored_mask[:, :, slice_idx]
+    
+    plt.figure(figsize=(8, 8))
+    im = plt.imshow(mask_slice, cmap=cmap, norm=norm, interpolation='none')
+    plt.axis('off')
+    plt.title(f'Ground Truth (Red) & nnU-Net Prediction (Green) - Slice {slice_idx}')
+
+    # Create custom legend
+    red_patch = mpatches.Patch(color='red', label='Ground Truth')
+    green_patch = mpatches.Patch(color='green', label='Prediction')
+    yellow_patch = mpatches.Patch(color='yellow', label='Overlap')
+    plt.legend(handles=[red_patch, green_patch, yellow_patch], loc='upper right', bbox_to_anchor=(1.15, 1))
+    
+    plt.show()
+
+def display_masks_slideshow_combined(colored_mask, cmap, norm, delay=1):
+    """
+    Displays all slices in a slideshow manner with a legend.
+
+    Parameters:
+    - colored_mask: 3D numpy array, combined mask with labels
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - delay: float, delay between slices in seconds
+    """
+    num_slices = colored_mask.shape[2]
+    
+    fig, ax = plt.subplots(figsize=(8, 8))
+    
+    # Create custom legend
+    red_patch = mpatches.Patch(color='red', label='Ground Truth')
+    green_patch = mpatches.Patch(color='green', label='Prediction')
+    yellow_patch = mpatches.Patch(color='yellow', label='Overlap')
+    ax.legend(handles=[red_patch, green_patch, yellow_patch], loc='upper right', bbox_to_anchor=(1.15, 1))
+    
+    def update(slice_idx):
+        ax.clear()
+        mask_slice = colored_mask[:, :, slice_idx]
+        im = ax.imshow(mask_slice, cmap=cmap, norm=norm, interpolation='none')
+        ax.axis('off')
+        ax.set_title(f'Slice {slice_idx}')
+        
+        # Re-add the legend after clearing
+        ax.legend(handles=[red_patch, green_patch, yellow_patch], loc='upper right', bbox_to_anchor=(1.15, 1))
+    
+    ani = animation.FuncAnimation(fig, update, frames=num_slices, interval=delay*1000, repeat=False)
+    plt.show()
+
+def main():
+    """
+    Main function to load masks, verify alignment, and visualize them.
+    """
+    # ==================== User-Defined Variables ====================
+
+    # Paths to the NIfTI files
+    ground_truth_path = '/home/declan/thesis7/10percenttest/ground_truth/BRAT_061.nii.gz'  # Replace with your ground truth NIfTI file path
+    prediction_path = '/home/declan/thesis7/resultPostprocess/BRAT_061.nii.gz'      # Replace with your prediction NIfTI file path
+
+    # Visualization settings
+    visualize_slice = True    # Set to True to visualize a specific slice
+    slice_index = 46          # Slice index to visualize (if visualize_slice is True)
+
+    use_slideshow = False       # Set to True to display all slices as a slideshow
+    slideshow_delay = 0.5      # Delay between slices in seconds for the slideshow
+
+    # ===================================================================
+
+    # Load masks along with their affine matrices and headers
+    ground_truth, affine_gt, header_gt = load_nifti_mask(ground_truth_path)
+    prediction, affine_pred, header_pred = load_nifti_mask(prediction_path)
+
+    # Print voxel spacing for both images
+    print_voxel_spacing(header_gt, label='Ground Truth')
+    print_voxel_spacing(header_pred, label='Prediction')
+
+    # Check if voxel spacings match
+    voxel_spacing_gt = header_gt.get_zooms()[:3]
+    voxel_spacing_pred = header_pred.get_zooms()[:3]
+    if voxel_spacing_gt != voxel_spacing_pred:
+        print("Warning: Voxel spacings do not match between ground truth and prediction.")
+        print(f"Ground Truth Voxel Spacing: {voxel_spacing_gt}")
+        print(f"Prediction Voxel Spacing: {voxel_spacing_pred}")
+    else:
+        print("Voxel spacings match.")
+
+    # Verify alignment by comparing affine matrices
+    aligned = check_affine_alignment(affine_gt, affine_pred)
+
+    if not aligned:
+        print("Affine matrices do not match. Consider resampling one of the images to align with the other.")
+        # Optionally, implement resampling here or exit
+        # sys.exit(1)
+        # For now, proceed but caution is advised
+    else:
+        print("Affines are aligned. Proceeding with visualization.")
+
+    # Check if dimensions match
+    if ground_truth.shape != prediction.shape:
+        print(f"Shape mismatch: Ground truth shape {ground_truth.shape} vs Prediction shape {prediction.shape}")
+        sys.exit(1)
+    
+    # Create combined mask
+    combined_mask = create_combined_mask(ground_truth, prediction)
+
+    # Define colormap and normalization
+    cmap = ListedColormap(['black', 'red', 'green', 'yellow'])  # 0: black, 1: red, 2: green, 3: yellow
+    bounds = [0, 0.5, 1.5, 2.5, 3.5]
+    norm = BoundaryNorm(bounds, cmap.N)
+
+    num_slices = combined_mask.shape[2]
+
+    if visualize_slice:
+        # Ensure slice_index is within bounds
+        if slice_index < 0 or slice_index >= num_slices:
+            print(f"Slice index {slice_index} is out of bounds for data with {num_slices} slices.")
+            sys.exit(1)
+        display_masks_slice_combined(combined_mask, slice_index, cmap, norm)
+    elif use_slideshow:
+        display_masks_slideshow_combined(combined_mask, cmap, norm, delay=slideshow_delay)
+    else:
+        # Default to middle slice if no specific visualization is chosen
+        middle_slice = num_slices // 2
+        display_masks_slice_combined(combined_mask, middle_slice, cmap, norm)
+
+if __name__ == "__main__":
+    main()
+
+
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import nibabel as nib
+import os
+import sys
+import matplotlib.patches as mpatches
+from matplotlib.colors import ListedColormap, BoundaryNorm
+
+def load_nifti_mask(nifti_path):
+    """
+    Loads a NIfTI mask file.
+
+    Parameters:
+    - nifti_path: str, path to the NIfTI file
+
+    Returns:
+    - mask: 3D numpy array
+    - affine: 2D numpy array, affine transformation matrix
+    - header: NIfTI header object
+    """
+    if not os.path.exists(nifti_path):
+        print(f"File not found: {nifti_path}")
+        sys.exit(1)
+    nifti_img = nib.load(nifti_path)
+    mask = nifti_img.get_fdata()
+    affine = nifti_img.affine
+    header = nifti_img.header
+    # Ensure binary mask
+    mask = (mask > 0).astype(np.uint8)
+    return mask, affine, header
+
+def print_voxel_spacing(header, label):
+    """
+    Prints the voxel spacing from the NIfTI header.
+
+    Parameters:
+    - header: NIfTI header object
+    - label: str, label to identify the image (e.g., 'Ground Truth')
+    """
+    voxel_spacing = header.get_zooms()[:3]
+    print(f"{label} Voxel Spacing (mm): {voxel_spacing}")
+
+def check_affine_alignment(affine_gt, affine_pred):
+    """
+    Checks if the affine matrices of ground truth and prediction match.
+
+    Parameters:
+    - affine_gt: 2D numpy array, affine matrix of ground truth
+    - affine_pred: 2D numpy array, affine matrix of prediction
+
+    Returns:
+    - bool, True if affines match within a tolerance, False otherwise
+    """
+    if np.allclose(affine_gt, affine_pred, atol=1e-5):
+        print("Affine matrices match. Images are aligned.")
+        return True
+    else:
+        print("Affine matrices do NOT match. Images may not be aligned.")
+        print("Ground Truth Affine:\n", affine_gt)
+        print("Prediction Affine:\n", affine_pred)
+        return False
+
+def create_combined_mask(ground_truth, prediction):
+    """
+    Creates a combined mask with distinct labels:
+    0 - Background
+    1 - Ground Truth only
+    2 - Prediction only
+    3 - Both Ground Truth and Prediction
+
+    Parameters:
+    - ground_truth: 3D numpy array
+    - prediction: 3D numpy array
+
+    Returns:
+    - combined_mask: 3D numpy array with combined labels
+    """
+    combined_mask = np.zeros_like(ground_truth, dtype=np.uint8)
+    combined_mask += ground_truth
+    combined_mask += prediction * 2
+    # Now:
+    # 0 - Background
+    # 1 - Ground Truth only
+    # 2 - Prediction only
+    # 3 - Both
+    return combined_mask
+
+def display_masks_slice_combined(colored_mask, slice_idx, cmap, norm, ax):
+    """
+    Displays a specific slice of the combined mask on a given Axes.
+
+    Parameters:
+    - colored_mask: 3D numpy array, combined mask with labels
+    - slice_idx: int, index of the slice to display
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - ax: matplotlib Axes object
+    """
+    if slice_idx < 0 or slice_idx >= colored_mask.shape[2]:
+        print(f"Slice index {slice_idx} is out of bounds for data with {colored_mask.shape[2]} slices.")
+        return
+    
+    mask_slice = colored_mask[:, :, slice_idx]
+    
+    ax.imshow(mask_slice, cmap=cmap, norm=norm, interpolation='none')
+    ax.axis('off')
+    ax.set_title(f'Slice {slice_idx}')
+
+def display_masks_grid(colored_mask, grid_size=(3,3), cmap=None, norm=None):
+    """
+    Displays a grid of slices with combined masks and a unified legend.
+
+    Parameters:
+    - colored_mask: 3D numpy array, combined mask with labels
+    - grid_size: tuple, number of rows and columns (default: (3,3))
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    """
+    rows, cols = grid_size
+    total_slices = rows * cols
+    num_slices = colored_mask.shape[2]
+    
+    # Select slices evenly spaced across the volume
+    slice_indices = np.linspace(0, num_slices - 1, total_slices, dtype=int)
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(cols*4, rows*4))
+    axes = axes.flatten()
+    
+    for idx, slice_idx in enumerate(slice_indices):
+        ax = axes[idx]
+        display_masks_slice_combined(colored_mask, slice_idx, cmap, norm, ax)
+    
+    # Create a unified legend
+    red_patch = mpatches.Patch(color='red', label='Ground Truth')
+    green_patch = mpatches.Patch(color='green', label='Prediction')
+    yellow_patch = mpatches.Patch(color='yellow', label='Overlap')
+    black_patch = mpatches.Patch(color='black', label='Background')
+    fig.legend(handles=[red_patch, green_patch, yellow_patch, black_patch],
+               loc='upper right', bbox_to_anchor=(0.95, 0.95))
+    
+    plt.tight_layout()
+    plt.subplots_adjust(right=0.85)  # Adjust to make room for the legend
+    plt.show()
+
+def main():
+    """
+    Main function to load masks, verify alignment, and visualize them.
+    """
+    # ==================== User-Defined Variables ====================
+
+    # Paths to the NIfTI files
+    ground_truth_path = '/home/declan/thesis7/10percenttest/ground_truth/BRAT_120.nii.gz'  # Replace with your ground truth NIfTI file path
+    prediction_path = '/home/declan/thesis7/resultPostprocess/BRAT_120.nii.gz'      # Replace with your prediction NIfTI file path
+
+    # Visualization settings
+    visualize_grid = True      # Set to True to visualize a grid of slices
+    grid_rows = 3              # Number of rows in the grid
+    grid_cols = 3              # Number of columns in the grid
+    slice_indices = [45,46,47,48,49,50,51,52,53]       # Optional: list of specific slice indices to visualize (if None, slices are auto-selected)
+
+    # Other visualization options
+    visualize_slice = False    # Set to True to visualize a specific single slice
+    slice_index = 100          # Slice index to visualize (if visualize_slice is True)
+
+    use_slideshow = False       # Set to True to display all slices as a slideshow
+    slideshow_delay = 0.5      # Delay between slices in seconds for the slideshow
+
+    # ===================================================================
+
+    # Load masks along with their affine matrices and headers
+    ground_truth, affine_gt, header_gt = load_nifti_mask(ground_truth_path)
+    prediction, affine_pred, header_pred = load_nifti_mask(prediction_path)
+
+    # Print voxel spacing for both images
+    print_voxel_spacing(header_gt, label='Ground Truth')
+    print_voxel_spacing(header_pred, label='Prediction')
+
+    # Check if voxel spacings match
+    voxel_spacing_gt = header_gt.get_zooms()[:3]
+    voxel_spacing_pred = header_pred.get_zooms()[:3]
+    if voxel_spacing_gt != voxel_spacing_pred:
+        print("Warning: Voxel spacings do not match between ground truth and prediction.")
+        print(f"Ground Truth Voxel Spacing: {voxel_spacing_gt}")
+        print(f"Prediction Voxel Spacing: {voxel_spacing_pred}")
+    else:
+        print("Voxel spacings match.")
+
+    # Verify alignment by comparing affine matrices
+    aligned = check_affine_alignment(affine_gt, affine_pred)
+
+    if not aligned:
+        print("Affine matrices do not match. Consider resampling one of the images to align with the other.")
+        # Optionally, implement resampling here or exit
+        # sys.exit(1)
+        # For now, proceed but caution is advised
+    else:
+        print("Affines are aligned. Proceeding with visualization.")
+
+    # Check if dimensions match
+    if ground_truth.shape != prediction.shape:
+        print(f"Shape mismatch: Ground truth shape {ground_truth.shape} vs Prediction shape {prediction.shape}")
+        sys.exit(1)
+
+    # Create combined mask
+    combined_mask = create_combined_mask(ground_truth, prediction)
+
+    # Define colormap and normalization
+    cmap = ListedColormap(['black', 'red', 'green', 'yellow'])  # 0: black, 1: red, 2: green, 3: yellow
+    bounds = [0, 0.5, 1.5, 2.5, 3.5]
+    norm = BoundaryNorm(bounds, cmap.N)
+
+    num_slices = combined_mask.shape[2]
+
+    # Visualization Logic
+    if visualize_grid:
+        grid_size = (grid_rows, grid_cols)
+        display_masks_grid(combined_mask, grid_size=grid_size, cmap=cmap, norm=norm)
+    elif visualize_slice:
+        # Ensure slice_index is within bounds
+        if slice_index < 0 or slice_index >= num_slices:
+            print(f"Slice index {slice_index} is out of bounds for data with {num_slices} slices.")
+            sys.exit(1)
+        # Display single slice with legend
+        display_masks_slice_combined(combined_mask, slice_index, cmap, norm, plt.gca())
+    elif use_slideshow:
+        # Slideshow is not adapted for grid; can implement separately if needed
+        print("Slideshow mode is not compatible with grid visualization. Please choose another mode.")
+    else:
+        # Default to middle slice if no specific visualization is chosen
+        middle_slice = num_slices // 2
+        display_masks_slice_combined(combined_mask, middle_slice, cmap, norm, plt.gca())
+
+if __name__ == "__main__":
+    main()
+
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import nibabel as nib
+import os
+import sys
+import matplotlib.patches as mpatches
+from matplotlib.colors import ListedColormap, BoundaryNorm
+
+def load_nifti_mask(nifti_path):
+    """
+    Loads a NIfTI mask file.
+
+    Parameters:
+    - nifti_path: str, path to the NIfTI file
+
+    Returns:
+    - mask: 3D numpy array
+    - affine: 2D numpy array, affine transformation matrix
+    - header: NIfTI header object
+    """
+    if not os.path.exists(nifti_path):
+        print(f"Error: File not found - {nifti_path}")
+        sys.exit(1)
+    try:
+        nifti_img = nib.load(nifti_path)
+        mask = nifti_img.get_fdata()
+        affine = nifti_img.affine
+        header = nifti_img.header
+        # Ensure binary mask
+        mask = (mask > 0).astype(np.uint8)
+        return mask, affine, header
+    except Exception as e:
+        print(f"Error loading NIfTI file {nifti_path}: {e}")
+        sys.exit(1)
+
+def print_voxel_spacing(header, label):
+    """
+    Prints the voxel spacing from the NIfTI header.
+
+    Parameters:
+    - header: NIfTI header object
+    - label: str, label to identify the image (e.g., 'Ground Truth')
+    """
+    voxel_spacing = header.get_zooms()[:3]
+    print(f"{label} Voxel Spacing (mm): {voxel_spacing}")
+
+def check_affine_alignment(affine_gt, affine_pred):
+    """
+    Checks if the affine matrices of ground truth and prediction match.
+
+    Parameters:
+    - affine_gt: 2D numpy array, affine matrix of ground truth
+    - affine_pred: 2D numpy array, affine matrix of prediction
+
+    Returns:
+    - bool, True if affines match within a tolerance, False otherwise
+    """
+    if np.allclose(affine_gt, affine_pred, atol=1e-5):
+        print("Affine matrices match. Images are aligned.")
+        return True
+    else:
+        print("Warning: Affine matrices do NOT match. Images may not be aligned.")
+        print("Ground Truth Affine:\n", affine_gt)
+        print("Prediction Affine:\n", affine_pred)
+        return False
+
+def create_combined_mask(ground_truth, prediction):
+    """
+    Creates a combined mask with distinct labels:
+    0 - Background
+    1 - Ground Truth only
+    2 - Prediction only
+    3 - Both Ground Truth and Prediction
+
+    Parameters:
+    - ground_truth: 3D numpy array
+    - prediction: 3D numpy array
+
+    Returns:
+    - combined_mask: 3D numpy array with combined labels
+    """
+    combined_mask = np.zeros_like(ground_truth, dtype=np.uint8)
+    combined_mask += ground_truth
+    combined_mask += prediction * 2
+    # Now:
+    # 0 - Background
+    # 1 - Ground Truth only
+    # 2 - Prediction only
+    # 3 - Both
+    return combined_mask
+
+def display_masks_slice_combined(colored_mask, slice_idx, cmap, norm, ax):
+    """
+    Displays a specific slice of the combined mask on a given Axes.
+
+    Parameters:
+    - colored_mask: 3D numpy array, combined mask with labels
+    - slice_idx: int, index of the slice to display
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - ax: matplotlib Axes object
+    """
+    if slice_idx < 0 or slice_idx >= colored_mask.shape[2]:
+        print(f"Warning: Slice index {slice_idx} is out of bounds for data with {colored_mask.shape[2]} slices.")
+        ax.set_axis_off()
+        ax.set_title(f'Slice {slice_idx} (Invalid Index)')
+        return
+
+    mask_slice = colored_mask[:, :, slice_idx]
+    im = ax.imshow(mask_slice, cmap=cmap, norm=norm, interpolation='none')
+    ax.axis('off')
+    ax.set_title(f'Slice {slice_idx}')
+
+def display_masks_grid(colored_mask, slice_indices, cmap=None, norm=None, grid_size=(3,3)):
+    """
+    Displays a grid of slices with combined masks and a unified legend.
+
+    Parameters:
+    - colored_mask: 3D numpy array, combined mask with labels
+    - slice_indices: list or array of 9 slice indices to display
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - grid_size: tuple, number of rows and columns (default: (3,3))
+    """
+    rows, cols = grid_size
+    total_slices = rows * cols
+    num_slices = colored_mask.shape[2]
+
+    if len(slice_indices) != total_slices:
+        print(f"Error: Number of slice indices provided ({len(slice_indices)}) does not match grid size ({total_slices}).")
+        sys.exit(1)
+
+    # Validate slice indices
+    for idx in slice_indices:
+        if idx < 0 or idx >= num_slices:
+            print(f"Error: Slice index {idx} is out of bounds for data with {num_slices} slices.")
+            sys.exit(1)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(cols*4, rows*4))
+    axes = axes.flatten()
+
+    for idx, slice_idx in enumerate(slice_indices):
+        ax = axes[idx]
+        display_masks_slice_combined(colored_mask, slice_idx, cmap, norm, ax)
+
+    # Create a unified legend
+    red_patch = mpatches.Patch(color='red', label='Ground Truth')
+    green_patch = mpatches.Patch(color='green', label='Prediction')
+    yellow_patch = mpatches.Patch(color='yellow', label='Overlap')
+    black_patch = mpatches.Patch(color='black', label='Background')
+    # Position the legend outside the grid
+    fig.legend(handles=[red_patch, green_patch, yellow_patch, black_patch],
+               loc='upper right', bbox_to_anchor=(1.15, 1))
+
+    plt.tight_layout()
+    plt.subplots_adjust(right=0.85)  # Adjust to make room for the legend
+    plt.show()
+
+def main():
+    """
+    Main function to load masks, verify alignment, and visualize them.
+    """
+    # ==================== User-Defined Variables ====================
+
+    # Paths to the NIfTI files
+    ground_truth_path = '/home/declan/thesis7/10percenttest/ground_truth/BRAT_106.nii.gz'  # Replace with your ground truth NIfTI file path
+    prediction_path = '/home/declan/thesis7/resultPostprocess/BRAT_106.nii.gz'      # Replace with your prediction NIfTI file path
+
+    # Define the list of 9 specific slice indices to display in the grid
+    slice_indices = [45,46,47,48,49,50,51,52,53]  # Replace with your desired slice indices
+
+    # Visualization options
+    visualize_grid = True      # Set to True to visualize a grid of slices
+    grid_size = (3, 3)          # Number of rows and columns in the grid
+
+    # ===================================================================
+
+    # Load masks along with their affine matrices and headers
+    ground_truth, affine_gt, header_gt = load_nifti_mask(ground_truth_path)
+    prediction, affine_pred, header_pred = load_nifti_mask(prediction_path)
+
+    # Print voxel spacing for both images
+    print_voxel_spacing(header_gt, label='Ground Truth')
+    print_voxel_spacing(header_pred, label='Prediction')
+
+    # Check if voxel spacings match
+    voxel_spacing_gt = header_gt.get_zooms()[:3]
+    voxel_spacing_pred = header_pred.get_zooms()[:3]
+    if voxel_spacing_gt != voxel_spacing_pred:
+        print("Warning: Voxel spacings do not match between ground truth and prediction.")
+        print(f"Ground Truth Voxel Spacing: {voxel_spacing_gt}")
+        print(f"Prediction Voxel Spacing: {voxel_spacing_pred}")
+    else:
+        print("Voxel spacings match.")
+
+    # Verify alignment by comparing affine matrices
+    aligned = check_affine_alignment(affine_gt, affine_pred)
+
+    if not aligned:
+        print("Affine matrices do not match. Consider resampling one of the images to align with the other.")
+        # Optionally, implement resampling here or exit
+        # sys.exit(1)
+        # For now, proceed but caution is advised
+    else:
+        print("Affines are aligned. Proceeding with visualization.")
+
+    # Check if dimensions match
+    if ground_truth.shape != prediction.shape:
+        print(f"Error: Shape mismatch - Ground truth shape {ground_truth.shape} vs Prediction shape {prediction.shape}")
+        sys.exit(1)
+
+    # Create combined mask
+    combined_mask = create_combined_mask(ground_truth, prediction)
+
+    # Define colormap and normalization
+    cmap = ListedColormap(['black', 'red', 'green', 'yellow'])  # 0: black, 1: red, 2: green, 3: yellow
+    bounds = [0, 0.5, 1.5, 2.5, 3.5]
+    norm = BoundaryNorm(bounds, cmap.N)
+
+    num_slices = combined_mask.shape[2]
+
+    # Visualization Logic
+    if visualize_grid:
+        display_masks_grid(combined_mask, slice_indices, cmap=cmap, norm=norm, grid_size=grid_size)
+    else:
+        # If not visualizing grid, you can implement other visualization modes here
+        print("No visualization mode selected. Exiting.")
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import nibabel as nib
+import os
+import sys
+import matplotlib.patches as mpatches
+from matplotlib.colors import ListedColormap, BoundaryNorm
+
+def load_nifti_image(nifti_path):
+    """
+    Loads a NIfTI image file.
+
+    Parameters:
+    - nifti_path: str, path to the NIfTI file
+
+    Returns:
+    - data: 3D numpy array
+    - affine: 2D numpy array, affine transformation matrix
+    - header: NIfTI header object
+    """
+    if not os.path.exists(nifti_path):
+        print(f"Error: File not found - {nifti_path}")
+        sys.exit(1)
+    try:
+        nifti_img = nib.load(nifti_path)
+        data = nifti_img.get_fdata()
+        affine = nifti_img.affine
+        header = nifti_img.header
+        return data, affine, header
+    except Exception as e:
+        print(f"Error loading NIfTI file {nifti_path}: {e}")
+        sys.exit(1)
+
+def load_nifti_mask(nifti_path):
+    """
+    Loads a NIfTI mask file and binarizes it.
+
+    Parameters:
+    - nifti_path: str, path to the NIfTI file
+
+    Returns:
+    - mask: 3D numpy array of type uint8
+    - affine: 2D numpy array, affine transformation matrix
+    - header: NIfTI header object
+    """
+    data, affine, header = load_nifti_image(nifti_path)
+    # Binarize the mask: assuming mask values > 0 are considered as mask
+    mask = (data > 0).astype(np.uint8)
+    return mask, affine, header
+
+def print_voxel_spacing(header, label):
+    """
+    Prints the voxel spacing from the NIfTI header.
+
+    Parameters:
+    - header: NIfTI header object
+    - label: str, label to identify the image (e.g., 'Anatomical Image')
+    """
+    voxel_spacing = header.get_zooms()[:3]
+    print(f"{label} Voxel Spacing (mm): {voxel_spacing}")
+
+def check_affine_alignment(affine_gt, affine_pred, affine_anat):
+    """
+    Checks if the affine matrices of anatomical, ground truth, and prediction images match.
+
+    Parameters:
+    - affine_gt: 2D numpy array, affine matrix of ground truth
+    - affine_pred: 2D numpy array, affine matrix of prediction
+    - affine_anat: 2D numpy array, affine matrix of anatomical image
+
+    Returns:
+    - bool, True if all affines match within a tolerance, False otherwise
+    """
+    aligned_gt_anat = np.allclose(affine_gt, affine_anat, atol=1e-5)
+    aligned_pred_anat = np.allclose(affine_pred, affine_anat, atol=1e-5)
+    
+    if aligned_gt_anat and aligned_pred_anat:
+        print("All affine matrices match. Images are aligned.")
+        return True
+    else:
+        if not aligned_gt_anat:
+            print("Warning: Ground Truth affine does NOT match Anatomical Image affine.")
+            print("Ground Truth Affine:\n", affine_gt)
+            print("Anatomical Image Affine:\n", affine_anat)
+        if not aligned_pred_anat:
+            print("Warning: Prediction affine does NOT match Anatomical Image affine.")
+            print("Prediction Affine:\n", affine_pred)
+            print("Anatomical Image Affine:\n", affine_anat)
+        print("Images may not be properly aligned. Consider resampling.")
+        return False
+
+def create_combined_mask(ground_truth, prediction):
+    """
+    Creates a combined mask with distinct labels:
+    0 - Background
+    1 - Ground Truth only
+    2 - Prediction only
+    3 - Both Ground Truth and Prediction
+
+    Parameters:
+    - ground_truth: 3D numpy array (uint8)
+    - prediction: 3D numpy array (uint8)
+
+    Returns:
+    - combined_mask: 3D numpy array with combined labels
+    """
+    combined_mask = np.zeros_like(ground_truth, dtype=np.uint8)
+    combined_mask += ground_truth  # 1 where ground truth mask is present
+    combined_mask += prediction * 2  # 2 where prediction mask is present
+    # Now:
+    # 0 - Background
+    # 1 - Ground Truth only
+    # 2 - Prediction only
+    # 3 - Both
+    return combined_mask
+
+def display_masks_slice_combined_with_anatomical(anatomical_image, colored_mask, slice_idx, cmap, norm, ax):
+    """
+    Displays a specific slice of the anatomical image with combined mask overlays.
+
+    Parameters:
+    - anatomical_image: 3D numpy array, anatomical image data
+    - colored_mask: 3D numpy array, combined mask with labels
+    - slice_idx: int, index of the slice to display
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - ax: matplotlib Axes object
+    """
+    if slice_idx < 0 or slice_idx >= anatomical_image.shape[2]:
+        print(f"Warning: Slice index {slice_idx} is out of bounds for data with {anatomical_image.shape[2]} slices.")
+        ax.set_axis_off()
+        ax.set_title(f'Slice {slice_idx} (Invalid Index)')
+        return
+
+    anatomical_slice = anatomical_image[:, :, slice_idx]
+    mask_slice = colored_mask[:, :, slice_idx]
+
+    # Normalize anatomical image for better contrast
+    anat_norm = anatomical_slice / np.max(anatomical_slice) if np.max(anatomical_slice) != 0 else anatomical_slice
+
+    # Display anatomical image in grayscale
+    ax.imshow(anat_norm, cmap='gray', interpolation='none')
+
+    # Overlay combined masks with transparency
+    ax.imshow(mask_slice, cmap=cmap, norm=norm, alpha=0.5, interpolation='none')
+    ax.axis('off')
+    ax.set_title(f'Slice {slice_idx}')
+
+def display_masks_grid_with_anatomical(anatomical_image, colored_mask, slice_indices, cmap=None, norm=None, grid_size=(3,3), save_path=None):
+    """
+    Displays a grid of slices with combined masks overlaid on the anatomical image and a unified legend.
+
+    Parameters:
+    - anatomical_image: 3D numpy array, anatomical image data
+    - colored_mask: 3D numpy array, combined mask with labels
+    - slice_indices: list or array of 9 slice indices to display
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - grid_size: tuple, number of rows and columns (default: (3,3))
+    - save_path: str or None, file path to save the image. If None, the image is not saved.
+    """
+    rows, cols = grid_size
+    total_slices = rows * cols
+    num_slices = colored_mask.shape[2]
+
+    if len(slice_indices) != total_slices:
+        print(f"Error: Number of slice indices provided ({len(slice_indices)}) does not match grid size ({total_slices}).")
+        sys.exit(1)
+
+    # Validate slice indices
+    for idx in slice_indices:
+        if idx < 0 or idx >= num_slices:
+            print(f"Error: Slice index {idx} is out of bounds for data with {num_slices} slices.")
+            sys.exit(1)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(cols*4, rows*4))
+    axes = axes.flatten()
+
+    for idx, slice_idx in enumerate(slice_indices):
+        ax = axes[idx]
+        display_masks_slice_combined_with_anatomical(anatomical_image, colored_mask, slice_idx, cmap, norm, ax)
+
+    # Create a unified legend
+    red_patch = mpatches.Patch(color='red', label='Ground Truth')
+    green_patch = mpatches.Patch(color='green', label='Prediction')
+    yellow_patch = mpatches.Patch(color='yellow', label='Overlap')
+    black_patch = mpatches.Patch(color='black', label='Background')
+    # Position the legend outside the grid
+    fig.legend(handles=[red_patch, green_patch, yellow_patch, black_patch],
+               loc='upper right', bbox_to_anchor=(1.15, 1))
+
+    plt.tight_layout()
+    plt.subplots_adjust(right=0.85)  # Adjust to make room for the legend
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f"Saved grid visualization to {save_path}")
+    else:
+        plt.show()
+
+def main():
+    """
+    Main function to load images, verify alignment, and visualize them.
+    """
+    # ==================== User-Defined Variables ====================
+
+    # Paths to the NIfTI files
+    anatomical_image_path = '/home/declan/thesis7/10percenttest/input/BRAT_120_0000.nii.gz'  # Replace with your anatomical NIfTI file path
+    ground_truth_path = '/home/declan/thesis7/10percenttest/ground_truth/BRAT_120.nii.gz'          # Replace with your ground truth NIfTI file path
+    prediction_path = '/home/declan/thesis7/resultPostprocess/BRAT_120.nii.gz'              # Replace with your prediction NIfTI file path
+
+    # Define the list of 9 specific slice indices to display in the grid
+    slice_indices = [45,46,47,48,49,50,51,52,53]  # Replace with your desired slice indices
+
+    # Visualization options
+    visualize_grid = True      # Set to True to visualize a grid of slices
+    grid_size = (3, 3)          # Number of rows and columns in the grid
+    save_grid = False           # Set to True to save the grid visualization to a file
+    save_path = 'grid_visualization.png'  # Path to save the visualization (if save_grid is True)
+
+    # ===================================================================
+
+    # Load images
+    anatomical_image, affine_anat, header_anat = load_nifti_image(anatomical_image_path)
+    ground_truth, affine_gt, header_gt = load_nifti_mask(ground_truth_path)
+    prediction, affine_pred, header_pred = load_nifti_mask(prediction_path)
+
+    # Print voxel spacing for all images
+    print_voxel_spacing(header_anat, label='Anatomical Image')
+    print_voxel_spacing(header_gt, label='Ground Truth')
+    print_voxel_spacing(header_pred, label='Prediction')
+
+    # Check voxel spacing consistency
+    voxel_spacing_gt = header_gt.get_zooms()[:3]
+    voxel_spacing_pred = header_pred.get_zooms()[:3]
+    voxel_spacing_anat = header_anat.get_zooms()[:3]
+
+    if (voxel_spacing_gt != voxel_spacing_anat) or (voxel_spacing_pred != voxel_spacing_anat):
+        print("Warning: Voxel spacings do not match among images.")
+        print(f"Anatomical Image Voxel Spacing: {voxel_spacing_anat}")
+        print(f"Ground Truth Voxel Spacing: {voxel_spacing_gt}")
+        print(f"Prediction Voxel Spacing: {voxel_spacing_pred}")
+    else:
+        print("All voxel spacings match.")
+
+    # Verify affine alignment
+    aligned = check_affine_alignment(affine_gt, affine_pred, affine_anat)
+
+    if not aligned:
+        print("Images are not properly aligned. Consider resampling to align all images spatially.")
+        # Optionally, implement resampling here or exit
+        # sys.exit(1)
+        # For now, proceed but caution is advised
+    else:
+        print("All images are aligned. Proceeding with visualization.")
+
+    # Check if dimensions match
+    if anatomical_image.shape != ground_truth.shape or anatomical_image.shape != prediction.shape:
+        print(f"Error: Shape mismatch among images.")
+        print(f"Anatomical Image Shape: {anatomical_image.shape}")
+        print(f"Ground Truth Shape: {ground_truth.shape}")
+        print(f"Prediction Shape: {prediction.shape}")
+        sys.exit(1)
+
+    # Create combined mask
+    combined_mask = create_combined_mask(ground_truth, prediction)
+
+    # Define colormap and normalization
+    cmap = ListedColormap(['black', 'red', 'green', 'yellow'])  # 0: black, 1: red, 2: green, 3: yellow
+    bounds = [0, 0.5, 1.5, 2.5, 3.5]
+    norm = BoundaryNorm(bounds, cmap.N)
+
+    # Visualization Logic
+    if visualize_grid:
+        if save_grid:
+            display_masks_grid_with_anatomical(
+                anatomical_image,
+                combined_mask,
+                slice_indices,
+                cmap=cmap,
+                norm=norm,
+                grid_size=grid_size,
+                save_path=save_path
+            )
+        else:
+            display_masks_grid_with_anatomical(
+                anatomical_image,
+                combined_mask,
+                slice_indices,
+                cmap=cmap,
+                norm=norm,
+                grid_size=grid_size,
+                save_path=None
+            )
+    else:
+        print("No visualization mode selected. Exiting.")
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import nibabel as nib
+import os
+import sys
+import matplotlib.patches as mpatches
+from matplotlib.colors import ListedColormap, BoundaryNorm
+
+def load_nifti_image(nifti_path):
+    """
+    Loads a NIfTI image file.
+
+    Parameters:
+    - nifti_path: str, path to the NIfTI file
+
+    Returns:
+    - data: 3D numpy array
+    - affine: 2D numpy array, affine transformation matrix
+    - header: NIfTI header object
+    """
+    if not os.path.exists(nifti_path):
+        print(f"Error: File not found - {nifti_path}")
+        sys.exit(1)
+    try:
+        nifti_img = nib.load(nifti_path)
+        data = nifti_img.get_fdata()
+        affine = nifti_img.affine
+        header = nifti_img.header
+        return data, affine, header
+    except Exception as e:
+        print(f"Error loading NIfTI file {nifti_path}: {e}")
+        sys.exit(1)
+
+def load_nifti_mask(nifti_path):
+    """
+    Loads a NIfTI mask file and binarizes it.
+
+    Parameters:
+    - nifti_path: str, path to the NIfTI file
+
+    Returns:
+    - mask: 3D numpy array of type uint8
+    - affine: 2D numpy array, affine transformation matrix
+    - header: NIfTI header object
+    """
+    data, affine, header = load_nifti_image(nifti_path)
+    # Binarize the mask: assuming mask values > 0 are considered as mask
+    mask = (data > 0).astype(np.uint8)
+    return mask, affine, header
+
+def print_voxel_spacing(header, label):
+    """
+    Prints the voxel spacing from the NIfTI header.
+
+    Parameters:
+    - header: NIfTI header object
+    - label: str, label to identify the image (e.g., 'Anatomical Image')
+    """
+    voxel_spacing = header.get_zooms()[:3]
+    print(f"{label} Voxel Spacing (mm): {voxel_spacing}")
+
+def check_affine_alignment(affine_gt, affine_pred, affine_anat):
+    """
+    Checks if the affine matrices of anatomical, ground truth, and prediction images match.
+
+    Parameters:
+    - affine_gt: 2D numpy array, affine matrix of ground truth
+    - affine_pred: 2D numpy array, affine matrix of prediction
+    - affine_anat: 2D numpy array, affine matrix of anatomical image
+
+    Returns:
+    - bool, True if all affines match within a tolerance, False otherwise
+    """
+    aligned_gt_anat = np.allclose(affine_gt, affine_anat, atol=1e-5)
+    aligned_pred_anat = np.allclose(affine_pred, affine_anat, atol=1e-5)
+    
+    if aligned_gt_anat and aligned_pred_anat:
+        print("All affine matrices match. Images are aligned.")
+        return True
+    else:
+        if not aligned_gt_anat:
+            print("Warning: Ground Truth affine does NOT match Anatomical Image affine.")
+            print("Ground Truth Affine:\n", affine_gt)
+            print("Anatomical Image Affine:\n", affine_anat)
+        if not aligned_pred_anat:
+            print("Warning: Prediction affine does NOT match Anatomical Image affine.")
+            print("Prediction Affine:\n", affine_pred)
+            print("Anatomical Image Affine:\n", affine_anat)
+        print("Images may not be properly aligned. Consider resampling.")
+        return False
+
+def create_combined_mask(ground_truth, prediction):
+    """
+    Creates a combined mask with distinct labels:
+    0 - Background
+    1 - Ground Truth only
+    2 - Prediction only
+    3 - Both Ground Truth and Prediction
+
+    Parameters:
+    - ground_truth: 3D numpy array (uint8)
+    - prediction: 3D numpy array (uint8)
+
+    Returns:
+    - combined_mask: 3D numpy array with combined labels
+    """
+    combined_mask = np.zeros_like(ground_truth, dtype=np.uint8)
+    combined_mask += ground_truth  # 1 where ground truth mask is present
+    combined_mask += prediction * 2  # 2 where prediction mask is present
+    # Now:
+    # 0 - Background
+    # 1 - Ground Truth only
+    # 2 - Prediction only
+    # 3 - Both
+    return combined_mask
+
+def display_masks_slice_combined_with_anatomical(anatomical_image, colored_mask, slice_idx, cmap, norm, ax):
+    """
+    Displays a specific slice of the anatomical image with combined mask overlays.
+
+    Parameters:
+    - anatomical_image: 3D numpy array, anatomical image data
+    - colored_mask: 3D numpy array, combined mask with labels
+    - slice_idx: int, index of the slice to display
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - ax: matplotlib Axes object
+    """
+    if slice_idx < 0 or slice_idx >= anatomical_image.shape[2]:
+        print(f"Warning: Slice index {slice_idx} is out of bounds for data with {anatomical_image.shape[2]} slices.")
+        ax.set_axis_off()
+        ax.set_title(f'Slice {slice_idx} (Invalid Index)')
+        return
+
+    anatomical_slice = anatomical_image[:, :, slice_idx]
+    mask_slice = colored_mask[:, :, slice_idx]
+
+    # Normalize anatomical image for better contrast
+    anat_norm = anatomical_slice / np.max(anatomical_slice) if np.max(anatomical_slice) != 0 else anatomical_slice
+
+    # Display anatomical image in grayscale
+    ax.imshow(anat_norm, cmap='gray', interpolation='none')
+
+    # Overlay combined masks with transparency
+    ax.imshow(mask_slice, cmap=cmap, norm=norm, alpha=0.5, interpolation='none')
+    ax.axis('off')
+    ax.set_title(f'Slice {slice_idx}')
+
+def create_slideshow(anatomical_image, colored_mask, cmap, norm, interval=500, save=False, save_path='slideshow.gif'):
+    """
+    Creates and displays a slideshow of all slices with anatomical image and mask overlays.
+
+    Parameters:
+    - anatomical_image: 3D numpy array, anatomical image data
+    - colored_mask: 3D numpy array, combined mask with labels
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - interval: int, delay between frames in milliseconds
+    - save: bool, whether to save the slideshow as a GIF
+    - save_path: str, file path to save the GIF (if save=True)
+    """
+    num_slices = anatomical_image.shape[2]
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    # Initialize the first frame
+    slice_idx = 0
+    anatomical_slice = anatomical_image[:, :, slice_idx]
+    mask_slice = colored_mask[:, :, slice_idx]
+    anat_norm = anatomical_slice / np.max(anatomical_slice) if np.max(anatomical_slice) != 0 else anatomical_slice
+    img = ax.imshow(anat_norm, cmap='gray', interpolation='none')
+    mask = ax.imshow(mask_slice, cmap=cmap, norm=norm, alpha=0.5, interpolation='none')
+    ax.axis('off')
+    title = ax.set_title(f'Slice {slice_idx}')
+
+    # Create a legend
+    red_patch = mpatches.Patch(color='red', label='Ground Truth')
+    green_patch = mpatches.Patch(color='green', label='Prediction')
+    yellow_patch = mpatches.Patch(color='yellow', label='Overlap')
+    black_patch = mpatches.Patch(color='black', label='Background')
+    plt.legend(handles=[red_patch, green_patch, yellow_patch, black_patch],
+               loc='upper right', bbox_to_anchor=(1.15, 1))
+
+    def update(frame):
+        slice_idx = frame
+        anatomical_slice = anatomical_image[:, :, slice_idx]
+        mask_slice = colored_mask[:, :, slice_idx]
+        anat_norm = anatomical_slice / np.max(anatomical_slice) if np.max(anatomical_slice) != 0 else anatomical_slice
+
+        img.set_data(anat_norm)
+        mask.set_data(mask_slice)
+        title.set_text(f'Slice {slice_idx}')
+        return img, mask, title
+
+    ani = animation.FuncAnimation(fig, update, frames=num_slices, interval=interval, blit=False, repeat=False)
+
+    if save:
+        # Save as GIF (requires imagemagick or pillow)
+        try:
+            ani.save(save_path, writer='pillow')
+            print(f"Slideshow saved as {save_path}")
+        except Exception as e:
+            print(f"Error saving slideshow: {e}")
+    else:
+        plt.show()
+
+def main():
+    """
+    Main function to load images, verify alignment, and visualize them.
+    """
+    # ==================== User-Defined Variables ====================
+
+    # Paths to the NIfTI files
+    anatomical_image_path = '/home/declan/thesis7/10percenttest/input/BRAT_206_0000.nii.gz'  # Replace with your anatomical NIfTI file path
+    ground_truth_path = '/home/declan/thesis7/10percenttest/ground_truth/BRAT_206.nii.gz'          # Replace with your ground truth NIfTI file path
+    prediction_path = '/home/declan/thesis7/resultPostprocess/BRAT_206.nii.gz'              # Replace with your prediction NIfTI file path
+
+    # Define the list of 9 specific slice indices to display in the grid
+    slice_indices = [45,46,47,48,49,50,51,52,53]  # Replace with your desired slice indices
+
+    # Visualization options
+    visualize_grid = False      # Set to True to visualize a grid of slices
+    visualize_slideshow = True  # Set to True to visualize a slideshow of all slices
+    grid_size = (3, 3)           # Number of rows and columns in the grid
+    interval = 1000               # Delay between frames in the slideshow (in milliseconds)
+    save_slideshow = True       # Set to True to save the slideshow as a GIF
+    save_path = 'slideshow.gif'  # Path to save the slideshow GIF (if save_slideshow is True)
+
+    # ===================================================================
+
+    # Load images
+    anatomical_image, affine_anat, header_anat = load_nifti_image(anatomical_image_path)
+    ground_truth, affine_gt, header_gt = load_nifti_mask(ground_truth_path)
+    prediction, affine_pred, header_pred = load_nifti_mask(prediction_path)
+
+    # Print voxel spacing for all images
+    print_voxel_spacing(header_anat, label='Anatomical Image')
+    print_voxel_spacing(header_gt, label='Ground Truth')
+    print_voxel_spacing(header_pred, label='Prediction')
+
+    # Check voxel spacing consistency
+    voxel_spacing_gt = header_gt.get_zooms()[:3]
+    voxel_spacing_pred = header_pred.get_zooms()[:3]
+    voxel_spacing_anat = header_anat.get_zooms()[:3]
+
+    if (voxel_spacing_gt != voxel_spacing_anat) or (voxel_spacing_pred != voxel_spacing_anat):
+        print("Warning: Voxel spacings do not match among images.")
+        print(f"Anatomical Image Voxel Spacing: {voxel_spacing_anat}")
+        print(f"Ground Truth Voxel Spacing: {voxel_spacing_gt}")
+        print(f"Prediction Voxel Spacing: {voxel_spacing_pred}")
+    else:
+        print("All voxel spacings match.")
+
+    # Verify affine alignment
+    aligned = check_affine_alignment(affine_gt, affine_pred, affine_anat)
+
+    if not aligned:
+        print("Images are not properly aligned. Consider resampling to align all images spatially.")
+        # Optionally, implement resampling here or exit
+        # sys.exit(1)
+        # For now, proceed but caution is advised
+    else:
+        print("All images are aligned. Proceeding with visualization.")
+
+    # Check if dimensions match
+    if anatomical_image.shape != ground_truth.shape or anatomical_image.shape != prediction.shape:
+        print(f"Error: Shape mismatch among images.")
+        print(f"Anatomical Image Shape: {anatomical_image.shape}")
+        print(f"Ground Truth Shape: {ground_truth.shape}")
+        print(f"Prediction Shape: {prediction.shape}")
+        sys.exit(1)
+
+    # Create combined mask
+    combined_mask = create_combined_mask(ground_truth, prediction)
+
+    # Define colormap and normalization
+    cmap = ListedColormap(['black', 'red', 'green', 'yellow'])  # 0: black, 1: red, 2: green, 3: yellow
+    bounds = [0, 0.5, 1.5, 2.5, 3.5]
+    norm = BoundaryNorm(bounds, cmap.N)
+
+    # Visualization Logic
+    if visualize_grid:
+        # Ensure exactly 9 slice indices are provided
+        if len(slice_indices) != grid_size[0] * grid_size[1]:
+            print(f"Error: Number of slice indices provided ({len(slice_indices)}) does not match grid size ({grid_size[0] * grid_size[1]}).")
+            sys.exit(1)
+        # Display grid
+        display_masks_grid_with_anatomical(
+            anatomical_image,
+            combined_mask,
+            slice_indices,
+            cmap=cmap,
+            norm=norm,
+            grid_size=grid_size,
+            save_path=None  # Set to a filename to save the grid visualization
+        )
+
+    if visualize_slideshow:
+        # Create and display slideshow
+        create_slideshow(
+            anatomical_image,
+            combined_mask,
+            cmap=cmap,
+            norm=norm,
+            interval=interval,
+            save=save_slideshow,
+            save_path=save_path
+        )
+
+    if not visualize_grid and not visualize_slideshow:
+        print("No visualization mode selected. Exiting.")
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import nibabel as nib
+import os
+import sys
+import matplotlib.patches as mpatches
+from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.widgets import Button
+
+def load_nifti_image(nifti_path):
+    """
+    Loads a NIfTI image file.
+
+    Parameters:
+    - nifti_path: str, path to the NIfTI file
+
+    Returns:
+    - data: 3D numpy array
+    - affine: 2D numpy array, affine transformation matrix
+    - header: NIfTI header object
+    """
+    if not os.path.exists(nifti_path):
+        print(f"Error: File not found - {nifti_path}")
+        sys.exit(1)
+    try:
+        nifti_img = nib.load(nifti_path)
+        data = nifti_img.get_fdata()
+        affine = nifti_img.affine
+        header = nifti_img.header
+        return data, affine, header
+    except Exception as e:
+        print(f"Error loading NIfTI file {nifti_path}: {e}")
+        sys.exit(1)
+
+def load_nifti_mask(nifti_path):
+    """
+    Loads a NIfTI mask file and binarizes it.
+
+    Parameters:
+    - nifti_path: str, path to the NIfTI file
+
+    Returns:
+    - mask: 3D numpy array of type uint8
+    - affine: 2D numpy array, affine transformation matrix
+    - header: NIfTI header object
+    """
+    data, affine, header = load_nifti_image(nifti_path)
+    # Binarize the mask: assuming mask values > 0 are considered as mask
+    mask = (data > 0).astype(np.uint8)
+    return mask, affine, header
+
+def print_voxel_spacing(header, label):
+    """
+    Prints the voxel spacing from the NIfTI header.
+
+    Parameters:
+    - header: NIfTI header object
+    - label: str, label to identify the image (e.g., 'Anatomical Image')
+    """
+    voxel_spacing = header.get_zooms()[:3]
+    print(f"{label} Voxel Spacing (mm): {voxel_spacing}")
+
+def check_affine_alignment(affine_gt, affine_pred, affine_anat):
+    """
+    Checks if the affine matrices of anatomical, ground truth, and prediction images match.
+
+    Parameters:
+    - affine_gt: 2D numpy array, affine matrix of ground truth
+    - affine_pred: 2D numpy array, affine matrix of prediction
+    - affine_anat: 2D numpy array, affine matrix of anatomical image
+
+    Returns:
+    - bool, True if all affines match within a tolerance, False otherwise
+    """
+    aligned_gt_anat = np.allclose(affine_gt, affine_anat, atol=1e-5)
+    aligned_pred_anat = np.allclose(affine_pred, affine_anat, atol=1e-5)
+    
+    if aligned_gt_anat and aligned_pred_anat:
+        print("All affine matrices match. Images are aligned.")
+        return True
+    else:
+        if not aligned_gt_anat:
+            print("Warning: Ground Truth affine does NOT match Anatomical Image affine.")
+            print("Ground Truth Affine:\n", affine_gt)
+            print("Anatomical Image Affine:\n", affine_anat)
+        if not aligned_pred_anat:
+            print("Warning: Prediction affine does NOT match Anatomical Image affine.")
+            print("Prediction Affine:\n", affine_pred)
+            print("Anatomical Image Affine:\n", affine_anat)
+        print("Images may not be properly aligned. Consider resampling.")
+        return False
+
+def create_combined_mask(ground_truth, prediction):
+    """
+    Creates a combined mask with distinct labels:
+    0 - Background
+    1 - Ground Truth only
+    2 - Prediction only
+    3 - Both Ground Truth and Prediction
+
+    Parameters:
+    - ground_truth: 3D numpy array (uint8)
+    - prediction: 3D numpy array (uint8)
+
+    Returns:
+    - combined_mask: 3D numpy array with combined labels
+    """
+    combined_mask = np.zeros_like(ground_truth, dtype=np.uint8)
+    combined_mask += ground_truth  # 1 where ground truth mask is present
+    combined_mask += prediction * 2  # 2 where prediction mask is present
+    # Now:
+    # 0 - Background
+    # 1 - Ground Truth only
+    # 2 - Prediction only
+    # 3 - Both
+    return combined_mask
+
+def display_masks_slice_combined_with_anatomical(anatomical_image, colored_mask, slice_idx, cmap, norm, ax):
+    """
+    Displays a specific slice of the anatomical image with combined mask overlays.
+
+    Parameters:
+    - anatomical_image: 3D numpy array, anatomical image data
+    - colored_mask: 3D numpy array, combined mask with labels
+    - slice_idx: int, index of the slice to display
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - ax: matplotlib Axes object
+    """
+    if slice_idx < 0 or slice_idx >= anatomical_image.shape[2]:
+        print(f"Warning: Slice index {slice_idx} is out of bounds for data with {anatomical_image.shape[2]} slices.")
+        ax.set_axis_off()
+        ax.set_title(f'Slice {slice_idx} (Invalid Index)')
+        return
+
+    anatomical_slice = anatomical_image[:, :, slice_idx]
+    mask_slice = colored_mask[:, :, slice_idx]
+
+    # Normalize anatomical image for better contrast
+    anat_norm = anatomical_slice / np.max(anatomical_slice) if np.max(anatomical_slice) != 0 else anatomical_slice
+
+    # Display anatomical image in grayscale
+    ax.imshow(anat_norm, cmap='gray', interpolation='none')
+
+    # Overlay combined masks with transparency
+    ax.imshow(mask_slice, cmap=cmap, norm=norm, alpha=0.5, interpolation='none')
+    ax.axis('off')
+    ax.set_title(f'Slice {slice_idx}')
+
+def display_masks_grid_with_anatomical(anatomical_image, colored_mask, slice_indices, cmap=None, norm=None, grid_size=(3,3), save_path=None):
+    """
+    Displays a grid of slices with combined masks overlaid on the anatomical image and a unified legend.
+
+    Parameters:
+    - anatomical_image: 3D numpy array, anatomical image data
+    - colored_mask: 3D numpy array, combined mask with labels
+    - slice_indices: list or array of 9 slice indices to display
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - grid_size: tuple, number of rows and columns (default: (3,3))
+    - save_path: str or None, file path to save the image. If None, the image is not saved.
+    """
+    rows, cols = grid_size
+    total_slices = rows * cols
+    num_slices = colored_mask.shape[2]
+
+    if len(slice_indices) != total_slices:
+        print(f"Error: Number of slice indices provided ({len(slice_indices)}) does not match grid size ({total_slices}).")
+        sys.exit(1)
+
+    # Validate slice indices
+    for idx in slice_indices:
+        if idx < 0 or idx >= num_slices:
+            print(f"Error: Slice index {idx} is out of bounds for data with {num_slices} slices.")
+            sys.exit(1)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(cols*4, rows*4))
+    axes = axes.flatten()
+
+    for idx, slice_idx in enumerate(slice_indices):
+        ax = axes[idx]
+        display_masks_slice_combined_with_anatomical(anatomical_image, colored_mask, slice_idx, cmap, norm, ax)
+
+    # Create a unified legend
+    red_patch = mpatches.Patch(color='red', label='Ground Truth')
+    green_patch = mpatches.Patch(color='green', label='Prediction')
+    yellow_patch = mpatches.Patch(color='yellow', label='Overlap')
+    black_patch = mpatches.Patch(color='black', label='Background')
+    # Position the legend outside the grid
+    fig.legend(handles=[red_patch, green_patch, yellow_patch, black_patch],
+               loc='upper right', bbox_to_anchor=(1.15, 1))
+
+    plt.tight_layout()
+    plt.subplots_adjust(right=0.85)  # Adjust to make room for the legend
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f"Saved grid visualization to {save_path}")
+    else:
+        plt.show()
+
+def create_interactive_slideshow(anatomical_image, colored_mask, cmap, norm, interval=500, save=False, save_path='slideshow.gif'):
+    """
+    Creates and displays an interactive slideshow of all slices with anatomical image and mask overlays.
+    Allows pausing, and navigating to next or previous slices.
+
+    Parameters:
+    - anatomical_image: 3D numpy array, anatomical image data
+    - colored_mask: 3D numpy array, combined mask with labels
+    - cmap: matplotlib Colormap object
+    - norm: matplotlib Normalize object
+    - interval: int, delay between frames in milliseconds for auto-play
+    - save: bool, whether to save the slideshow as a GIF
+    - save_path: str, file path to save the GIF (if save=True)
+    """
+    num_slices = anatomical_image.shape[2]
+    current_slice = [0]  # Use list for mutable integer in nested functions
+    playing = [False]    # Use list for mutable boolean in nested functions
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    plt.subplots_adjust(bottom=0.2)  # Make space for buttons
+
+    anatomical_slice = anatomical_image[:, :, current_slice[0]]
+    mask_slice = colored_mask[:, :, current_slice[0]]
+    anat_norm = anatomical_slice / np.max(anatomical_slice) if np.max(anatomical_slice) != 0 else anatomical_slice
+    img = ax.imshow(anat_norm, cmap='gray', interpolation='none')
+    mask = ax.imshow(mask_slice, cmap=cmap, norm=norm, alpha=0.5, interpolation='none')
+    ax.axis('off')
+    title = ax.set_title(f'Slice {current_slice[0]}')
+
+    # Create a legend
+    red_patch = mpatches.Patch(color='red', label='Ground Truth')
+    green_patch = mpatches.Patch(color='green', label='Prediction')
+    yellow_patch = mpatches.Patch(color='yellow', label='Overlap')
+    black_patch = mpatches.Patch(color='black', label='Background')
+    # Position the legend outside the main plot
+    fig.legend(handles=[red_patch, green_patch, yellow_patch, black_patch],
+               loc='upper right', bbox_to_anchor=(1.15, 1))
+
+    # Define button axes
+    axprev = plt.axes([0.3, 0.05, 0.1, 0.075])  # [left, bottom, width, height]
+    axpause = plt.axes([0.45, 0.05, 0.1, 0.075])
+    axnext = plt.axes([0.6, 0.05, 0.1, 0.075])
+
+    # Create buttons
+    bprev = Button(axprev, 'Previous')
+    bpause = Button(axpause, 'Play')
+    bnext = Button(axnext, 'Next')
+
+    def update_display():
+        anatomical_slice = anatomical_image[:, :, current_slice[0]]
+        mask_slice = colored_mask[:, :, current_slice[0]]
+        anat_norm = anatomical_slice / np.max(anatomical_slice) if np.max(anatomical_slice) != 0 else anatomical_slice
+
+        img.set_data(anat_norm)
+        mask.set_data(mask_slice)
+        title.set_text(f'Slice {current_slice[0]}')
+        fig.canvas.draw_idle()
+
+    def next_slice(event):
+        if current_slice[0] < num_slices - 1:
+            current_slice[0] += 1
+            update_display()
+
+    def prev_slice(event):
+        if current_slice[0] > 0:
+            current_slice[0] -= 1
+            update_display()
+
+    def play_pause(event):
+        if playing[0]:
+            playing[0] = False
+            bpause.label.set_text('Play')
+        else:
+            playing[0] = True
+            bpause.label.set_text('Pause')
+
+    bnext.on_clicked(next_slice)
+    bprev.on_clicked(prev_slice)
+    bpause.on_clicked(play_pause)
+
+    # Timer for auto-play
+    def update_frame(frame):
+        if playing[0]:
+            if current_slice[0] < num_slices - 1:
+                current_slice[0] += 1
+            else:
+                playing[0] = False
+                bpause.label.set_text('Play')
+            update_display()
+
+    ani = animation.FuncAnimation(fig, update_frame, interval=interval, blit=False)
+
+    if save:
+        # Save as GIF (requires pillow)
+        try:
+            ani.save(save_path, writer='pillow')
+            print(f"Slideshow saved as {save_path}")
+        except Exception as e:
+            print(f"Error saving slideshow: {e}")
+    else:
+        plt.show()
+
+def main():
+    """
+    Main function to load images, verify alignment, and visualize them.
+    """
+    # ==================== User-Defined Variables ====================
+
+    # Paths to the NIfTI files
+    anatomical_image_path = '/home/declan/thesis7/10percenttest/input/BRAT_261_0000.nii.gz'  # Replace with your anatomical NIfTI file path
+    ground_truth_path = '/home/declan/thesis7/10percenttest/ground_truth/BRAT_261.nii.gz'          # Replace with your ground truth NIfTI file path
+    prediction_path = '/home/declan/thesis7/resultPostprocess/BRAT_261.nii.gz'              # Replace with your prediction NIfTI file path
+
+    # Define the list of 9 specific slice indices to display in the grid
+    slice_indices = [50, 100, 150, 200, 250, 300, 350, 400, 450]  # Replace with your desired slice indices
+
+    # Visualization options
+    visualize_grid = False      # Set to True to visualize a grid of slices
+    visualize_slideshow = True  # Set to True to visualize a slideshow of all slices
+    grid_size = (3, 3)           # Number of rows and columns in the grid
+    interval = 500               # Delay between frames in the slideshow (in milliseconds)
+    save_slideshow = False       # Set to True to save the slideshow as a GIF
+    save_path = 'slideshow.gif'  # Path to save the slideshow GIF (if save_slideshow is True)
+
+    # ===================================================================
+
+    # Load images
+    anatomical_image, affine_anat, header_anat = load_nifti_image(anatomical_image_path)
+    ground_truth, affine_gt, header_gt = load_nifti_mask(ground_truth_path)
+    prediction, affine_pred, header_pred = load_nifti_mask(prediction_path)
+
+    # Print voxel spacing for all images
+    print_voxel_spacing(header_anat, label='Anatomical Image')
+    print_voxel_spacing(header_gt, label='Ground Truth')
+    print_voxel_spacing(header_pred, label='Prediction')
+
+    # Check voxel spacing consistency
+    voxel_spacing_gt = header_gt.get_zooms()[:3]
+    voxel_spacing_pred = header_pred.get_zooms()[:3]
+    voxel_spacing_anat = header_anat.get_zooms()[:3]
+
+    if (voxel_spacing_gt != voxel_spacing_anat) or (voxel_spacing_pred != voxel_spacing_anat):
+        print("Warning: Voxel spacings do not match among images.")
+        print(f"Anatomical Image Voxel Spacing: {voxel_spacing_anat}")
+        print(f"Ground Truth Voxel Spacing: {voxel_spacing_gt}")
+        print(f"Prediction Voxel Spacing: {voxel_spacing_pred}")
+    else:
+        print("All voxel spacings match.")
+
+    # Verify affine alignment
+    aligned = check_affine_alignment(affine_gt, affine_pred, affine_anat)
+
+    if not aligned:
+        print("Images are not properly aligned. Consider resampling to align all images spatially.")
+        # Optionally, implement resampling here or exit
+        # sys.exit(1)
+        # For now, proceed but caution is advised
+    else:
+        print("All images are aligned. Proceeding with visualization.")
+
+    # Check if dimensions match
+    if anatomical_image.shape != ground_truth.shape or anatomical_image.shape != prediction.shape:
+        print(f"Error: Shape mismatch among images.")
+        print(f"Anatomical Image Shape: {anatomical_image.shape}")
+        print(f"Ground Truth Shape: {ground_truth.shape}")
+        print(f"Prediction Shape: {prediction.shape}")
+        sys.exit(1)
+
+    # Create combined mask
+    combined_mask = create_combined_mask(ground_truth, prediction)
+
+    # Define colormap and normalization
+    cmap = ListedColormap(['black', 'red', 'green', 'yellow'])  # 0: black, 1: red, 2: green, 3: yellow
+    bounds = [0, 0.5, 1.5, 2.5, 3.5]
+    norm = BoundaryNorm(bounds, cmap.N)
+
+    # Visualization Logic
+    if visualize_grid:
+        # Ensure exactly 9 slice indices are provided
+        if len(slice_indices) != grid_size[0] * grid_size[1]:
+            print(f"Error: Number of slice indices provided ({len(slice_indices)}) does not match grid size ({grid_size[0] * grid_size[1]}).")
+            sys.exit(1)
+        # Display grid
+        display_masks_grid_with_anatomical(
+            anatomical_image,
+            combined_mask,
+            slice_indices,
+            cmap=cmap,
+            norm=norm,
+            grid_size=grid_size,
+            save_path=None  # Set to a filename to save the grid visualization
+        )
+
+    if visualize_slideshow:
+        # Create and display interactive slideshow
+        create_interactive_slideshow(
+            anatomical_image,
+            combined_mask,
+            cmap=cmap,
+            norm=norm,
+            interval=interval,
+            save=save_slideshow,
+            save_path=save_path
+        )
+
+    if not visualize_grid and not visualize_slideshow:
+        print("No visualization mode selected. Exiting.")
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+
+
+# %%
+!nnUNetv2_export_model_to_zip \
+    -d 97 \
+    -o /home/declan/thesis7/exportedmodel097.zip \
+    -c 3d_fullres \
+    -tr nnUNetTrainer_2000epochs \
+    -p nnUNetPlans
+
+# %%
+
+
+
