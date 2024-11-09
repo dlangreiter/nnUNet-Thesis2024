@@ -9,7 +9,7 @@ from sklearn.metrics import roc_auc_score, precision_score, recall_score
 import re
 from collections import defaultdict
 
-# Define the modality mappings based on exact filenames
+# Define the modality mappings based on test cases
 BRAT_MODALITIES = {
     'Liver_0004_0000.nii.gz': 'Axial Precontrast Fat Suppressed T1w (dynpre)',
     'Liver_0004_0001.nii.gz': 'Axial Opposede Phase (opposed)',
@@ -35,7 +35,6 @@ BRAT_MODALITIES = {
     'Liver_0050_0000.nii.gz': 'Axial Precontrast Fat Suppressed T1w (dynpre)',
     'Liver_0050_0001.nii.gz': 'Axial Opposede Phase (opposed)',
     'Liver_0050_0002.nii.gz': 'Axial In Phase (t1nfs)'
-    # Add all relevant filename-to-modality mappings here
 }
 
 def get_folder_path(prompt):
@@ -56,16 +55,6 @@ def get_folder_path(prompt):
             return os.path.abspath(path)
 
 def calculate_dice_coefficient(y_true, y_pred):
-    """
-    Calculates the DICE coefficient between two binary masks.
-
-    Args:
-        y_true (numpy.ndarray): Ground truth binary mask.
-        y_pred (numpy.ndarray): Predicted binary mask.
-
-    Returns:
-        float: DICE coefficient.
-    """
     y_true_f = y_true.flatten()
     y_pred_f = y_pred.flatten()
     if np.sum(y_true_f) == 0 and np.sum(y_pred_f) == 0:
@@ -75,16 +64,6 @@ def calculate_dice_coefficient(y_true, y_pred):
     return dice
 
 def calculate_iou(y_true, y_pred):
-    """
-    Calculates the Intersection over Union (IoU) between two binary masks.
-
-    Args:
-        y_true (numpy.ndarray): Ground truth binary mask.
-        y_pred (numpy.ndarray): Predicted binary mask.
-
-    Returns:
-        float: IoU score.
-    """
     intersection = np.logical_and(y_true, y_pred).sum()
     union = np.logical_or(y_true, y_pred).sum()
     if union == 0:
@@ -93,16 +72,6 @@ def calculate_iou(y_true, y_pred):
     return iou
 
 def calculate_precision(y_true, y_pred):
-    """
-    Calculates the Precision between two binary masks.
-
-    Args:
-        y_true (numpy.ndarray): Ground truth binary mask.
-        y_pred (numpy.ndarray): Predicted binary mask.
-
-    Returns:
-        float: Precision score.
-    """
     y_true_f = y_true.flatten()
     y_pred_f = y_pred.flatten()
     if np.sum(y_pred_f) == 0:
@@ -111,16 +80,6 @@ def calculate_precision(y_true, y_pred):
     return precision
 
 def calculate_recall(y_true, y_pred):
-    """
-    Calculates the Recall between two binary masks.
-
-    Args:
-        y_true (numpy.ndarray): Ground truth binary mask.
-        y_pred (numpy.ndarray): Predicted binary mask.
-
-    Returns:
-        float: Recall score.
-    """
     y_true_f = y_true.flatten()
     y_pred_f = y_pred.flatten()
     if np.sum(y_true_f) == 0:
@@ -129,16 +88,6 @@ def calculate_recall(y_true, y_pred):
     return recall
 
 def calculate_auroc(y_true, y_scores):
-    """
-    Calculates the AUROC between the ground truth and prediction scores.
-
-    Args:
-        y_true (numpy.ndarray): Ground truth binary mask.
-        y_scores (numpy.ndarray): Predicted scores or probabilities.
-
-    Returns:
-        float: AUROC score.
-    """
     try:
         # Flatten the arrays
         y_true_f = y_true.flatten()
@@ -153,15 +102,6 @@ def calculate_auroc(y_true, y_scores):
         return np.nan
 
 def load_nifti_file(filepath):
-    """
-    Loads a NIfTI file and returns its data as a numpy array.
-
-    Args:
-        filepath (str): Path to the NIfTI file.
-
-    Returns:
-        numpy.ndarray: Image data.
-    """
     try:
         img = nib.load(filepath)
         data = img.get_fdata()
@@ -177,7 +117,7 @@ def main():
     pred_folder = get_folder_path("Enter the path to the predicted NIfTI files folder: ")
     gt_folder = get_folder_path("Enter the path to the ground truth NIfTI files folder: ")
     
-    # Initialize lists to store results
+    # Initialise lists to store results
     results = []
     
     # List all NIfTI files in the predicted folder
@@ -216,13 +156,13 @@ def main():
             print(f"Warning: Shape mismatch for '{pred_file}'. Predicted shape: {pred_data.shape}, Ground truth shape: {gt_data.shape}. Skipping.")
             continue
         
-        # Binarize the ground truth and prediction
+        # Binarise the ground truth and prediction
         gt_binary = (gt_data > 0).astype(np.uint8)
-        # If prediction is probabilistic, keep as is; if binary, binarize
+        # If prediction is probabilistic, keep as is; if binary, binarise
         if pred_data.dtype != float and pred_data.dtype != np.float32 and pred_data.dtype != np.float64:
             pred_binary = (pred_data > 0).astype(np.uint8)
         else:
-            pred_binary = pred_data  # Assume it's probabilistic
+            pred_binary = pred_data 
         
         # For metrics that require binary predictions
         if pred_data.dtype != float and pred_data.dtype != np.float32 and pred_data.dtype != np.float64:
@@ -295,7 +235,6 @@ def main():
     print("\n=== Summary of Performance Metrics by Modality ===\n")
     print(summary.to_string(index=False))
     
-    # **New Addition: Print Images Included in Each Modality**
     print("\n=== Images Included in Each Modality ===\n")
     # Create a dictionary mapping modalities to list of Filenames
     modality_to_files = df.groupby('Modality')['Filename'].apply(list).to_dict()
